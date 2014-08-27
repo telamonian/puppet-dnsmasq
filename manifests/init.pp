@@ -4,56 +4,76 @@
 #
 #   include dnsmasq
 class dnsmasq {
-  require homebrew
-  require dnsmasq::config
-
-  file { [$dnsmasq::config::configdir, $dnsmasq::config::logdir, $dnsmasq::config::datadir]:
-    ensure => directory
+  if $::osfamily == 'Darwin' {
+    $dnsmasq_package_ensure = '2.71-boxen1'
+    $dnsmasq_package_name = 'boxen/brews/dnsmasq'
+    $dnsmasq_package_provider = homebrew
+    $dnsmasq_service_name = 'dev.dnsmasq'
+  }
+  elsif $::osfamily == 'Debian' {
+    $dnsmasq_package_ensure = latest
+    $dnsmasq_package_name = 'dnsmasq'
+    $dnsmasq_package_provider = apt
+    $dnsmasq_service_name = 'dnsmasq'
+  }
+  else {
+    fail("Unsupported OS for dnsmasq module")
   }
 
-  file { "${dnsmasq::config::configdir}/dnsmasq.conf":
-    notify  => Service['dev.dnsmasq'],
-    require => File[$dnsmasq::config::configdir],
-    source  => 'puppet:///modules/dnsmasq/dnsmasq.conf'
+  if $::osfamily == 'Darwin' {
+    require homebrew
+    require dnsmasq::config
+
+    file { [$dnsmasq::config::configdir, $dnsmasq::config::logdir, $dnsmasq::config::datadir]:
+      ensure => directory
+    }
+
+    file { "${dnsmasq::config::configdir}/dnsmasq.conf":
+      notify  => Service[$dnsmasq_service_name],
+      require => File[$dnsmasq::config::configdir],
+      source  => 'puppet:///modules/dnsmasq/dnsmasq.conf'
+    }
+
+    file { '/Library/LaunchDaemons/dev.dnsmasq.plist':
+      content => template('dnsmasq/dev.dnsmasq.plist.erb'),
+      group   => $::boxen_rootgroup,
+      notify  => Service[$dnsmasq_service_name],
+      owner   => $::boxen_rootuser,
+    }
+
+    file { '/etc/resolver':
+      ensure => directory,
+      group  => $::boxen_rootgroup,
+      owner  => $::boxen_rootuser
+    }
+
+    file { '/etc/resolver/dev':
+      content => 'nameserver 127.0.0.1',
+      group   => $::boxen_rootgroup,
+      owner   => $::boxen_rootuser,
+      require => File['/etc/resolver'],
+      notify  => Service[$dnsmasq_service_name],
+    }
+
+    homebrew::formula { 'dnsmasq':
+      before => Package['boxen/brews/dnsmasq'],
+    }
+
+    service { 'com.boxen.dnsmasq': # replaced by dev.dnsmasq
+      before => Service[$dnsmasq_service_name],
+      enable => false
+    }
   }
 
-  file { '/Library/LaunchDaemons/dev.dnsmasq.plist':
-    content => template('dnsmasq/dev.dnsmasq.plist.erb'),
-    group   => 'wheel',
-    notify  => Service['dev.dnsmasq'],
-    owner   => 'root'
+  package {
+    $dnsmasq_package_name:
+      ensure   => $dnsmasq_package_ensure,
+      provider => $dnsmasq_package_provider,
+      notify => Service[$dnsmasq_service_name]
   }
 
-  file { '/etc/resolver':
-    ensure => directory,
-    group  => 'wheel',
-    owner  => 'root'
-  }
-
-  file { '/etc/resolver/dev':
-    content => 'nameserver 127.0.0.1',
-    group   => 'wheel',
-    owner   => 'root',
-    require => File['/etc/resolver'],
-    notify  => Service['dev.dnsmasq'],
-  }
-
-  homebrew::formula { 'dnsmasq':
-    before => Package['boxen/brews/dnsmasq'],
-  }
-
-  package { 'boxen/brews/dnsmasq':
-    ensure => '2.71-boxen1',
-    notify => Service['dev.dnsmasq']
-  }
-
-  service { 'dev.dnsmasq':
+  service { $dnsmasq_service_name:
     ensure  => running,
-    require => Package['boxen/brews/dnsmasq']
-  }
-
-  service { 'com.boxen.dnsmasq': # replaced by dev.dnsmasq
-    before => Service['dev.dnsmasq'],
-    enable => false
+    require => Package[$dnsmasq_package_name]
   }
 }
